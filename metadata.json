@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Cost Engine Pro - Clear",
+  "description": "A professional engineering tool for BOQ management and resource-based budgeting with AI estimations and Firebase cloud synchronization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

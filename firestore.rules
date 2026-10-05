@@ -1,0 +1,126 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isVerifiedOwner(userId) {
+      return isOwner(userId) && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validation Helpers
+    function isValidResource(data) {
+      return data.keys().hasAll(['id', 'name', 'type', 'unit', 'unitPrice']) &&
+             data.keys().hasOnly(['id', 'name', 'type', 'unit', 'unitPrice', 'category', 'code', 'productivityUnit', 'crewSize', 'conversionFactor', 'productivity', 'purchaseUnit']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 200 &&
+             data.type in ['Labor', 'Material', 'Equipment', 'Subcontractor'] &&
+             data.unit is string && data.unit.size() <= 32 &&
+             data.unitPrice is number &&
+             (!('category' in data) || data.category == null || (data.category is string && data.category.size() <= 100)) &&
+             (!('code' in data) || data.code == null || (data.code is string && data.code.size() <= 100)) &&
+             (!('productivityUnit' in data) || data.productivityUnit == null || (data.productivityUnit is string && data.productivityUnit.size() <= 32)) &&
+             (!('crewSize' in data) || data.crewSize == null || data.crewSize is number) &&
+             (!('conversionFactor' in data) || data.conversionFactor == null || data.conversionFactor is number) &&
+             (!('productivity' in data) || data.productivity == null || data.productivity is number) &&
+             (!('purchaseUnit' in data) || data.purchaseUnit == null || (data.purchaseUnit is string && data.purchaseUnit.size() <= 32));
+    }
+
+    function isValidProject(data) {
+      return data.keys().hasAll(['id', 'name', 'currency', 'country', 'updatedAt']) &&
+             data.keys().hasOnly(['id', 'name', 'currency', 'country', 'updatedAt', 'boqItems', 'subcontractorOffers', 'qsTakeoffs', 'resourceLibrary', 'scopeOfWork']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 200 &&
+             data.currency is string && data.currency.size() <= 10 &&
+             data.country is string && data.country.size() <= 64 &&
+             data.updatedAt is string && data.updatedAt.size() <= 128 &&
+             (!('scopeOfWork' in data) || data.scopeOfWork == null || (data.scopeOfWork is string && data.scopeOfWork.size() <= 10000)) &&
+             (!('boqItems' in data) || data.boqItems is list) &&
+             (!('subcontractorOffers' in data) || data.subcontractorOffers is list) &&
+             (!('qsTakeoffs' in data) || data.qsTakeoffs is list) &&
+             (!('resourceLibrary' in data) || data.resourceLibrary is list);
+    }
+
+    function isValidTemplate(data) {
+      return data.keys().hasAll(['id', 'name']) &&
+             data.keys().hasOnly(['id', 'name', 'description', 'unit', 'conversionRate', 'productivity', 'resources']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 200 &&
+             (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 2000)) &&
+             (!('unit' in data) || data.unit == null || (data.unit is string && data.unit.size() <= 32)) &&
+             (!('conversionRate' in data) || data.conversionRate == null || data.conversionRate is number) &&
+             (!('productivity' in data) || data.productivity == null || data.productivity is number) &&
+             (!('resources' in data) || data.resources is list);
+    }
+
+    // Health check endpoint for testConnection()
+    match /test/connection {
+      allow read: if true;
+    }
+
+    // Collection: Users
+    match /users/{userId} {
+      // User can manage their own profile
+      allow get: if isOwner(userId);
+      allow create: if isVerifiedOwner(userId) && incoming().uid == userId && incoming().keys().hasAll(['uid', 'email']) && incoming().keys().hasOnly(['uid', 'email', 'lastActiveProjectId']);
+      allow update: if isVerifiedOwner(userId) && incoming().uid == userId && incoming().uid == existing().uid && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'lastActiveProjectId']);
+      allow delete: if isVerifiedOwner(userId);
+      
+      // Resource Library
+      match /resourceLibrary/{resourceId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId) && isValidId(resourceId);
+        allow create: if isVerifiedOwner(userId) && isValidId(resourceId) && incoming().id == resourceId && isValidResource(incoming());
+        allow update: if isVerifiedOwner(userId) && isValidId(resourceId) && incoming().id == existing().id && isValidResource(incoming()) && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['id', 'name', 'type', 'unit', 'unitPrice', 'category', 'code', 'productivityUnit', 'crewSize', 'conversionFactor', 'productivity', 'purchaseUnit'])
+        );
+        allow delete: if isVerifiedOwner(userId) && isValidId(resourceId);
+      }
+
+      // Projects
+      match /projects/{projectId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId) && isValidId(projectId);
+        allow create: if isVerifiedOwner(userId) && isValidId(projectId) && incoming().id == projectId && isValidProject(incoming());
+        allow update: if isVerifiedOwner(userId) && isValidId(projectId) && incoming().id == existing().id && isValidProject(incoming()) && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['id', 'name', 'currency', 'country', 'updatedAt', 'boqItems', 'subcontractorOffers', 'qsTakeoffs', 'resourceLibrary', 'scopeOfWork'])
+        );
+        allow delete: if isVerifiedOwner(userId) && isValidId(projectId);
+      }
+
+      // Activity Templates
+      match /activityTemplates/{templateId} {
+        allow list: if isOwner(userId);
+        allow get: if isOwner(userId) && isValidId(templateId);
+        allow create: if isVerifiedOwner(userId) && isValidId(templateId) && incoming().id == templateId && isValidTemplate(incoming());
+        allow update: if isVerifiedOwner(userId) && isValidId(templateId) && incoming().id == existing().id && isValidTemplate(incoming()) && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['id', 'name', 'description', 'resources', 'unit', 'conversionRate', 'productivity'])
+        );
+        allow delete: if isVerifiedOwner(userId) && isValidId(templateId);
+      }
+    }
+  }
+}
